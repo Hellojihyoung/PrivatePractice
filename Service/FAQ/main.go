@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/labstack/echo"
@@ -31,8 +32,10 @@ var connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=t
 	
 
 func createFAQ(c echo.Context) error{
-	params := make(map[string]string)
-    c.Bind(&params)
+	id := c.FormValue("id")
+	status := c.FormValue("status")
+	title := c.FormValue("title")
+	content := c.FormValue("content")
 
 	db, err := sql.Open("mysql", connectionString)
 
@@ -42,7 +45,7 @@ func createFAQ(c echo.Context) error{
 
 	defer db.Close()
 
-	result, err := db.Exec("INSERT INTO FAQ VALUES(?, ?, ?, ?)", params["id"], params["status"], params["title"], params["content"])
+	result, err := db.Exec("INSERT INTO FAQ VALUES(?, ?, ?, ?)", id, status, title, content)
 
 	if err != nil {
         fmt.Println(err.Error())
@@ -54,7 +57,7 @@ func createFAQ(c echo.Context) error{
         fmt.Println("1 row inserted.")
     }
 
-    return c.JSON(http.StatusOK, params)
+    return c.JSON(http.StatusOK, result)
 }
 
 func getFAQ(c echo.Context) error {
@@ -84,6 +87,13 @@ func getFAQ(c echo.Context) error {
 }
 
 func getAllFAQs(c echo.Context) error { // 보이는 것만 가져오기
+
+	requested_page := c.QueryParam("page")
+	requested_count := c.QueryParam("count")
+	page , _ := strconv.Atoi(requested_page)
+	count, _ := strconv.Atoi(requested_count)
+	getPage := strconv.Itoa((page-1) * count)
+	
 	db, err := sql.Open("mysql", connectionString)
 	
 	if err != nil {
@@ -91,7 +101,7 @@ func getAllFAQs(c echo.Context) error { // 보이는 것만 가져오기
 	}
 	defer db.Close()
 
-	rows, err := db.Query("SELECT id, faq_title FROM faq WHERE faq_status = 1") // 질문만
+	rows, err := db.Query("SELECT id, faq_title, faq_content FROM faq WHERE faq_status = 1 ORDER BY id DESC limit ?, ?", getPage, requested_count)
 
 	if err != nil {
 		fmt.Println(err)
@@ -103,7 +113,7 @@ func getAllFAQs(c echo.Context) error { // 보이는 것만 가져오기
 
 	for rows.Next() {
 		var f faq
-        err := rows.Scan(&f.Id, &f.Title)
+        err := rows.Scan(&f.Id, &f.Title, &f.Content)
         if err != nil {
             fmt.Println(err)
         }
@@ -200,7 +210,7 @@ func updateVisability(c echo.Context) error{
 
 
 func deleteFAQ(c echo.Context) error{
-	requested_id := c.Param("id")
+	requested_id := c.QueryParam("id")
 	db, err := sql.Open("mysql", connectionString)
 
 	if err != nil {
@@ -239,13 +249,16 @@ func main() {
 		AllowMethods: []string{echo.GET, echo.PUT, echo.POST, echo.DELETE},
 	  }))
 	
-	e.POST("/faqs", createFAQ)
-	e.GET("/faqs", getAllFAQs)
+	e.GET("/api/v1/service/faq", getAllFAQs)
+	e.POST("/v1/service/faq", createFAQ)
+	e.DELETE("/v1/service/faq", deleteFAQ)
+
+
+	
 	e.GET("/faqs/:id", getFAQ)
 	e.PUT("/faqs/update/content/:id", updateFAQContent) // content 수정
 	e.PUT("/faqs/update/title/:id", updateFAQTitle) // title 수정
 	e.PUT("/faqs/updateVisability/:id", updateVisability) // 삭제 _ status 변환
-	e.DELETE("/faqs/:id", deleteFAQ)
 	// update를 한번에 하는 방법은..? 덮어씌워지지 않고 하는 방법
 
 	e.Logger.Fatal(e.Start(":3000"))

@@ -32,8 +32,10 @@ var connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=t
 	
 
 func createNotice(c echo.Context) error{
-	params := make(map[string]string)
-    c.Bind(&params)
+	id := c.FormValue("id")
+	status := c.FormValue("status")
+	title := c.FormValue("title")
+	content := c.FormValue("content")
 
 	db, err := sql.Open("mysql", connectionString)
 
@@ -43,7 +45,7 @@ func createNotice(c echo.Context) error{
 
 	defer db.Close()
 
-	result, err := db.Exec("INSERT INTO NOTICE VALUES(?, ?, ?, ?)", params["id"], params["status"], params["title"], params["content"])
+	result, err := db.Exec("INSERT INTO NOTICE VALUES(?, ?, ?, ?)", id, status,title, content)
 
 	if err != nil {
         fmt.Println(err.Error())
@@ -55,7 +57,7 @@ func createNotice(c echo.Context) error{
         fmt.Println("1 row inserted.")
     }
 
-    return c.JSON(http.StatusOK, params)
+    return c.JSON(http.StatusOK, result)
 }
 
 func getNotice(c echo.Context) error {
@@ -85,9 +87,11 @@ func getNotice(c echo.Context) error {
 }
 
 func getAllNotices(c echo.Context) error { // 보이는 것만 가져오기
-	requested_page := c.Param("page")
+	requested_page := c.QueryParam("page")
+	requested_count := c.QueryParam("count")
 	page , _ := strconv.Atoi(requested_page)
-	getPage := strconv.Itoa((page-1) * 10)
+	count, _ := strconv.Atoi(requested_count)
+	getPage := strconv.Itoa((page-1) * count)
 
 	db, err := sql.Open("mysql", connectionString)
 	
@@ -96,7 +100,7 @@ func getAllNotices(c echo.Context) error { // 보이는 것만 가져오기
 	}
 	defer db.Close()
 
-	rows, err := db.Query("SELECT id, notice_title, notice_content FROM notice WHERE notice_status = 1 limit "+ getPage +", 10")
+	rows, err := db.Query("SELECT id, notice_title, notice_content FROM notice WHERE notice_status = 1 ORDER BY id DESC limit ?, ?", getPage, requested_count)
 
 	if err != nil {
 		fmt.Println(err)
@@ -147,8 +151,8 @@ func updateNotice(c echo.Context) error{
 }
 
 
-func updateVisability(c echo.Context) error{
-	requested_id := c.Param("id")
+func deleteNotice(c echo.Context) error{
+	requested_id := c.QueryParam("id")
 	db, err := sql.Open("mysql", connectionString)
 
 	params := make(map[string]string)
@@ -189,12 +193,13 @@ func main() {
 		AllowMethods: []string{echo.GET, echo.PUT, echo.POST, echo.DELETE},
 	  }))
 	
-	e.POST("/notices", createNotice)
-	e.GET("/allNotices/:page", getAllNotices)
+
+	e.GET("/api/v1/service/notice", getAllNotices)
+	e.POST("/v1/service/notice", createNotice)
+	e.PUT("/v1/service/notice/:id", deleteNotice) // 삭제 _ status 변환
+
 	e.GET("/notices/:id", getNotice)
 	e.PUT("/notices/updateNotice/:id", updateNotice) // content 수정
-	e.PUT("/notices/updateVisability/:id", updateVisability) // 삭제 _ status 변환
-	// update를 한번에 하는 방법은..? 덮어씌워지지 않고 하는 방법
 
 	e.Logger.Fatal(e.Start(":3000"))
 }
