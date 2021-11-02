@@ -6,98 +6,179 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"reflect"
+	"sync"
 	"strings"
 	"time"
+	"sort"
 
 	"github.com/joho/godotenv"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awsutil"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/labstack/echo"
 )
 
-func initEnv() map[string]string{
+const (
+	PartSize   = 50_000_000
+	RETRIES    = 2
+)
 
-	err := godotenv.Load()
+var (
+	svc *s3.S3
+	err = godotenv.Load()
+	id = os.Getenv("AWS_ACCESS_KEY_ID")
+	key = os.Getenv("AWS_SECRET_ACCESS_KEY")
+	region = os.Getenv("AWS_S3_REGION")
+	bucket = os.Getenv("AWS_S3_BUCKET")
+	token = ""
+)
 
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
- 
-	env := map[string]string{
-		"id": os.Getenv("AWS_ACCESS_KEY_ID"),
-		"key" : os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		"region" : os.Getenv("AWS_S3_REGION"),
-		"bucket" : os.Getenv("AWS_S3_BUCKET"),
-		"token" : "",
-	}
-
-	return env
+type partUploadResult struct {
+	completedPart *s3.CompletedPart
+	err           error
 }
 
-func init(){
-	fmt.Println("dffdf")
-	
-}
-
-func uploadImage(c echo.Context) error {
-	img := c.FormValue("img")
-
-	err := godotenv.Load()
-
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
-	env := initEnv()
-
-	creds := credentials.NewStaticCredentials(env["id"],env["key"], env["token"])
-
+func init() {
+	creds := credentials.NewStaticCredentials(id, key, token)
 	_, err = creds.Get()
 	if err != nil {
 		fmt.Printf("bad credentials: %s", err)
 	}
+	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
+	svc = s3.New(session.New(), cfg)
+}
 
-	cfg := aws.NewConfig().WithRegion(env["region"]).WithCredentials(creds)
-	svc := s3.New(session.New(), cfg)
 
-	file, err := os.Open(img)
+var wg = sync.WaitGroup{}
+var ch = make(chan partUploadResult)
 
-	if err != nil {
-		fmt.Printf("err opening file: %s", err)
+// by multipart
+func uploadToS3(resp *s3.CreateMultipartUploadOutput, fileBytes []byte, partNum int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	var try int
+	fmt.Printf("Uploading %v \n", len(fileBytes))
+	for try <= RETRIES {
+		uploadRes, err := svc.UploadPart(&s3.UploadPartInput{
+			Body:          bytes.NewReader(fileBytes),
+			Bucket:        resp.Bucket,
+			Key:           resp.Key,
+			PartNumber:    aws.Int64(int64(partNum)),
+			UploadId:      resp.UploadId,
+			ContentLength: aws.Int64(int64(len(fileBytes))),
+		})
+		if err != nil {
+			fmt.Println(err)
+			if try == RETRIES {
+				ch <- partUploadResult{nil, err}
+				return
+			} else {
+				try++
+				time.Sleep(time.Duration(time.Second * 15))
+			}
+		} else {
+			ch <- partUploadResult{
+				&s3.CompletedPart{
+					ETag:       uploadRes.ETag,
+					PartNumber: aws.Int64(int64(partNum)),
+				}, nil,
+			}
+			return
+		}
 	}
+	ch <- partUploadResult{}
+}
 
+func uploadImageMultipart(c echo.Context) error{
+	img := c.FormValue("img")
+	file, _ := os.Open(img)
 	defer file.Close()
 
-	fileInfo, _ := file.Stat()
-	size := fileInfo.Size()
-	buffer := make([]byte, size) // read file content to buffer
+	stat, _ := file.Stat()
+	fileSize := stat.Size()
 
-	file.Read(buffer)
-	fileBytes := bytes.NewReader(buffer)
-	fileType := http.DetectContentType(buffer)
-	path := file.Name()
-	params := &s3.PutObjectInput{
-		Bucket:        aws.String(env["bucket"]),
-		Key:           aws.String(path),
-		Body:          fileBytes,
-		ContentLength: aws.Int64(size),
-		ContentType:   aws.String(fileType),
-	}
-	resp, err := svc.PutObject(params)
+	buffer := make([]byte, fileSize)
+
+	_, _ = file.Read(buffer)
+
+	expiryDate := time.Now().AddDate(0, 0, 1)
+
+	createdResp, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket:  aws.String(bucket),
+		Key:     aws.String(img),
+		Expires: &expiryDate,
+	})
+
 	if err != nil {
-		fmt.Printf("bad response: %s", err)
+		fmt.Print(err)
+		return err
 	}
 
-	fmt.Printf("response %s", awsutil.StringValue(resp))
+	var start, currentSize int
+	var remaining = int(fileSize)
+	var partNum = 1
+	var completedParts []*s3.CompletedPart
+	for start = 0; remaining > 0; start += PartSize {
+		wg.Add(1)
+		if remaining < PartSize {
+			currentSize = remaining
+		} else {
+			currentSize = PartSize
+		}
+		go uploadToS3(createdResp, buffer[start:start+currentSize], partNum, &wg)
 
-	return c.String(http.StatusOK, awsutil.StringValue(resp))
+		remaining -= currentSize
+		fmt.Printf("Uplaodind of part %v started and remaning is %v \n", partNum, remaining)
+		partNum++
+
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	for result := range ch {
+		if result.err != nil {
+			_, err = svc.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(bucket),
+				Key:      aws.String(file.Name()),
+				UploadId: createdResp.UploadId,
+			})
+			if err != nil {
+				fmt.Print(err)
+				os.Exit(1)
+			}
+		}
+		fmt.Printf("Uploading of part %v has been finished \n", *result.completedPart.PartNumber)
+		completedParts = append(completedParts, result.completedPart)
+	}
+
+	// Ordering the array based on the PartNumber as each parts could be uploaded in different order!
+	sort.Slice(completedParts, func(i, j int) bool {
+		return *completedParts[i].PartNumber < *completedParts[j].PartNumber
+	})
+
+	// Signalling AWS S3 that the multiPartUpload is finished
+	resp, err := svc.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   createdResp.Bucket,
+		Key:      createdResp.Key,
+		UploadId: createdResp.UploadId,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+
+	if err != nil {
+		fmt.Print(err)
+		return err
+	} else {
+		fmt.Println(resp.String())
+	}
+	
+	return c.String(http.StatusOK, resp.String()) 
 }
 
 func downloadImage(c echo.Context) error {
@@ -108,26 +189,10 @@ func downloadImage(c echo.Context) error {
         log.Fatalf("Error loading .env file: %v", err)
     }
 
- 	env := initEnv()
-
-    if env["bucket"] == "" {
-        log.Fatal("an s3 bucket was unable to be loaded from env vars")
-    }
-
- 	creds := credentials.NewStaticCredentials(env["id"], env["key"], env["token"])
-	_, err = creds.Get()
-	if err != nil {
-		fmt.Printf("bad credentials: %s", err)
-		return err
-	}
-
-	cfg := aws.NewConfig().WithRegion(env["region"]).WithCredentials(creds)
-
-	svc := s3.New(session.New(), cfg)
-	fmt.Println(reflect.TypeOf(svc))
     r, _ := svc.GetObjectRequest(&s3.GetObjectInput{
-        Bucket: aws.String(env["bucket"]),
+        Bucket: aws.String(bucket),
         Key:    aws.String(img),
+		
     })
  
 	// url 생성
@@ -154,14 +219,14 @@ func downloadImage(c echo.Context) error {
     // Initialize a session in us-west-2 that the SDK will use to load
     // credentials from the shared credentials file ~/.aws/credentials.
     sess, _ := session.NewSession(&aws.Config{
-        Region: aws.String(env["region"])},
+        Region: aws.String(region)},
     )
 
     downloader := s3manager.NewDownloader(sess)
 
     numBytes, err := downloader.Download(file,
         &s3.GetObjectInput{
-            Bucket: aws.String(env["bucket"]),
+            Bucket: aws.String(bucket),
             Key:    aws.String(imageKey),
         })
     if err != nil {
@@ -178,8 +243,9 @@ func downloadImage(c echo.Context) error {
 func main() {
 	e := echo.New()
 
-	e.POST("/image", uploadImage)
+	e.POST("/image", uploadImageMultipart)
 	e.GET("/image", downloadImage)
 
 	e.Logger.Fatal(e.Start(":3000"))
 }
+
