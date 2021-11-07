@@ -3,21 +3,23 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
-	"sync"
-	"strings"
-	"time"
 	"sort"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 
 	"github.com/aws/aws-sdk-go/aws"
+	// "github.com/aws/aws-sdk-go/aws/awsutil"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/labstack/echo"
 )
 
@@ -53,12 +55,15 @@ func init() {
 
 
 var wg = sync.WaitGroup{}
-var ch = make(chan partUploadResult)
+// var ch = make(chan partUploadResult)
+var ch chan partUploadResult
 
-// by multipart
+// // by multipart
 func uploadToS3(resp *s3.CreateMultipartUploadOutput, fileBytes []byte, partNum int, wg *sync.WaitGroup) {
+	ch = make(chan partUploadResult) 
 	defer wg.Done()
 	var try int
+
 	fmt.Printf("Uploading %v \n", len(fileBytes))
 	for try <= RETRIES {
 		uploadRes, err := svc.UploadPart(&s3.UploadPartInput{
@@ -91,23 +96,42 @@ func uploadToS3(resp *s3.CreateMultipartUploadOutput, fileBytes []byte, partNum 
 	ch <- partUploadResult{}
 }
 
-func uploadImageMultipart(c echo.Context) error{
-	img := c.FormValue("img")
-	file, _ := os.Open(img)
-	defer file.Close()
+func uploadImage(c echo.Context) error{
+	
+	file, err := c.FormFile("img")
+	if err != nil {
+		fmt.Print(err)
+		return err
+	}
 
-	stat, _ := file.Stat()
+	src, err := file.Open()
+	if err!=nil{
+		return err
+	}
+	defer src.Close()
+
+	fmt.Println(file.Filename)
+
+	dst, _ := os.Create(file.Filename)
+	defer os.Remove(file.Filename)
+
+	if _, err = io.Copy(dst, src); err != nil {
+		return err
+	}
+
+	stat, _ := dst.Stat()
 	fileSize := stat.Size()
+
 
 	buffer := make([]byte, fileSize)
 
-	_, _ = file.Read(buffer)
+	_, _ = dst.Read(buffer)
 
 	expiryDate := time.Now().AddDate(0, 0, 1)
 
 	createdResp, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
 		Bucket:  aws.String(bucket),
-		Key:     aws.String(img),
+		Key:     aws.String(file.Filename),
 		Expires: &expiryDate,
 	})
 
@@ -144,7 +168,7 @@ func uploadImageMultipart(c echo.Context) error{
 		if result.err != nil {
 			_, err = svc.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
 				Bucket:   aws.String(bucket),
-				Key:      aws.String(file.Name()),
+				Key:      aws.String(dst.Name()),
 				UploadId: createdResp.UploadId,
 			})
 			if err != nil {
@@ -180,6 +204,39 @@ func uploadImageMultipart(c echo.Context) error{
 	
 	return c.String(http.StatusOK, resp.String()) 
 }
+
+// Pipe 써서 한것,,
+// func uploadImage(c echo.Context) error{
+// 	img, err := c.FormFile("file")
+// 	if err != nil {
+// 		fmt.Print(err)
+// 		return err
+// 	}
+
+// 	_, writer := io.Pipe()
+// 	file, _ := img.Open()
+
+// 	go func()  {
+// 		gw := writer
+// 		io.Copy(gw, file)
+// 		file.Close()
+// 		gw.Close()
+// 		writer.Close()
+// 	}()
+	
+// 	params := &s3.PutObjectInput{
+// 		Bucket: aws.String(bucket),
+// 		Key: aws.String(img.Filename),
+// 	}
+
+// 	resp, err := svc.PutObject(params)
+// 	if err != nil {
+// 		fmt.Print("bad response: %s", err)
+// 	}
+// 	fmt.Printf("response %s", awsutil.StringValue(resp))
+	
+// 	return c.JSON(http.StatusOK, "uploaded" + img.Filename)
+// }
 
 func downloadImage(c echo.Context) error {
 	img := c.FormValue("img")
@@ -243,7 +300,7 @@ func downloadImage(c echo.Context) error {
 func main() {
 	e := echo.New()
 
-	e.POST("/image", uploadImageMultipart)
+	e.POST("/image", uploadImage)
 	e.GET("/image", downloadImage)
 
 	e.Logger.Fatal(e.Start(":3000"))
