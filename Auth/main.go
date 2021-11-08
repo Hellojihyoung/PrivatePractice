@@ -78,8 +78,8 @@ type VerificationToken struct {
 
 var googleOauthConfig = oauth2.Config{ 
     RedirectURL:  "http://localhost:3000/auth/google/callback", 
-    ClientID:     "552627757934-dlhqnijgeajtb8spncv813eock8ug411.apps.googleusercontent.com",
-    ClientSecret: "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",
+    ClientID:     "884159187834-3mv80c26ad3jiuvn1runqrht5f4ji66t.apps.googleusercontent.com",
+    ClientSecret: "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",
     Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
     Endpoint:     google.Endpoint,
 }
@@ -189,7 +189,6 @@ func idExist(pNum string, Id string) bool{
 }
 
 func createNum(c echo.Context) error {
-
 	params := make(map[string]string)
     c.Bind(&params)
 
@@ -232,7 +231,6 @@ func createNum(c echo.Context) error {
 	return c.JSON(http.StatusOK, expirationTime)
 }
 
-
 func compareCertificationNumber(pNum, code string) bool{
 
 	db, err := sql.Open("mysql", connectionString)
@@ -258,7 +256,7 @@ func compareCertificationNumber(pNum, code string) bool{
 	return true
 }
 
-func generateVerificationToken(phoneNumber string) VerificationToken{
+func generateVerificationToken(phoneNumber string) (map[string]string, error){
 	claims := &JwtClaim{
 		phoneNumber,
 		jwt.StandardClaims{
@@ -274,18 +272,11 @@ func generateVerificationToken(phoneNumber string) VerificationToken{
 		// return err
 	}
 
-	vToken := VerificationToken{
-		verificationToken: t,
-		verificationTokenExpires: claims.ExpiresAt,
-	}
+	return map[string]string{
+		"verificationToken": t,
+		"verificationTokenExpires": string(claims.ExpiresAt),
+	}, nil
 
-	
-	// vToken := map[string]string{
-	// 	"verificationToken": t,
-	// 	"verificationTokenExpires": string(claims.ExpiresAt),
-	// }
-	
-	return vToken
 }
 
 func confirmationNumber(c echo.Context) error {
@@ -293,16 +284,15 @@ func confirmationNumber(c echo.Context) error {
 	params := make(map[string]string)
     c.Bind(&params)
 
-	phoneNumber := params["phoneNumber"]
+	requested_phoneNumber := params["phoneNumber"]
 	requested_code := params["code"]
 
-	if compareCertificationNumber(phoneNumber, requested_code){
+	if compareCertificationNumber(requested_phoneNumber, requested_code){
 		fmt.Println("인증번호 불일치")
 		return errors.New("인증번호가 일치하지 않습니다")
 	}
 
-	verificationToken := generateVerificationToken(phoneNumber)
-	 fmt.Println(verificationToken)
+	verificationToken, _ := generateVerificationToken(requested_phoneNumber)
 
 	return c.JSON(http.StatusOK, verificationToken)
 }
@@ -310,14 +300,12 @@ func confirmationNumber(c echo.Context) error {
 // 로그인 요청 받을 경우 유저가 어떤 경로로 접근해서 로그인할 수 있는지 리다이렉트
 func getUserByGoogle(c echo.Context) error{ 
 	serviceName := c.Param("serviceName")
-	fmt.Println(serviceName)
 	db, err := sql.Open("mysql", connectionString)
 
 	if err != nil {
 		fmt.Println(err.Error())
-		response := stateInfo{State: ""}
-			return c.JSON(http.StatusInternalServerError, response)
 	}
+
 	defer db.Close()
 	
 	var state string;
@@ -432,17 +420,20 @@ func getGoogleUserInfo(code string) ([]byte, error) {
     if err != nil {
       return nil, fmt.Errorf("failed to Exchange %s", err.Error())
     }
+	
+	refresh_token_ = token.RefreshToken
 
-	fmt.Println("Access Token")
-	fmt.Println(token.AccessToken)
-	fmt.Println("Refresh Token")
-	fmt.Println(token.RefreshToken)
+	// fmt.Println("Access Token")
+	// fmt.Println(token.AccessToken)
+	// fmt.Println("Refresh Token")
+	
+	// fmt.Println(token.RefreshToken)
+	// fmt.Println(refresh_token_)
 
     res, err := http.Get(oauthGoogleUrlAPI + token.AccessToken) // userinfo request by token
     if err != nil {
       return nil, fmt.Errorf("failed to Get UserInfo %s", err.Error())
     }
-
 
     return ioutil.ReadAll(res.Body)
 }
@@ -499,23 +490,6 @@ func renewalToken(c echo.Context) ( error) {
 	  })
 }
 
-// func GetAccessToken(c echo.Context) error {
-// 	client := resty.New()
-// 	resp, err := client.R().
-// 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
-// 		SetFormData(map[string]string{
-// 			"code":          c.FormValue("code"),
-// 			"client_id":     "552627757934-dlhqnijgeajtb8spncv813eock8ug411.apps.googleusercontent.com",
-// 			"client_secret": "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",
-// 			"redirect_uri":  "http://localhost:3000",
-// 			"grant_type":    "refresh_token",
-// 		}).
-// 		Post("https://www.googleapis.com/oauth2/v4/token")
-// 	if err != nil {
-// 		log.Println(err.Error())
-// 	}
-// }
-
 func main() {
 
 	e := echo.New()
@@ -528,14 +502,14 @@ func main() {
 		AllowMethods: []string{echo.GET, echo.PUT, echo.POST, echo.DELETE},
 	}))
 
-	e.POST("/api/v1/auth/phone-verification", createNum) // 휴대폰 인증
-	e.POST("/api/v1/auth/phone-verification/verify", confirmationNumber) // 휴대폰 인증번호 확인
+	e.POST("/api/v1/auth/phone-verification", createNum) // AUTH-1
+	e.POST("/api/v1/auth/phone-verification/verify", confirmationNumber) // AUTH-2
 
-	e.GET("/auth/google/login/:serviceName", getUserByGoogle) // join by google (경로를 구글 API에 이렇게 등록해놔서 그냥 둠)
+	e.POST("/api/v1/auth/state", createState) // AUTH-3
+	e.GET("/api/v1/auth/redirect/:serviceName", getUserByGoogle) // AUTH-4
    	e.GET("/auth/google/callback", googleAuthCallback)
 
-	e.POST("/api/v1/auth/refresh-token", googleAuthCallback)
-	e.POST("/api/v1/auth/state", renewalToken)
+	e.POST("/api/v1/auth/refresh-token", renewalToken) // AUTH-5
 
 	e.Start(":3000")
 }
