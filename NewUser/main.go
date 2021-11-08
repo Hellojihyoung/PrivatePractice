@@ -37,6 +37,16 @@ type jwtCustomClaims struct {
 
 	jwt.StandardClaims
 }
+type jwtAccessClaims struct {
+	Method  int      `json:"method"`
+	UserId  string   `json:"userId"`
+	IsTermAgree bool `json:"isTermAgree"`
+	IsInfoRegistered bool `json:"isInfoRegistered"`
+	IsPhoneVerified bool `json:"isPhoneVerified"`
+
+	jwt.StandardClaims
+
+}
 
 type JwtClaim struct {
 	Phone  string `json:"phoneNumber"`
@@ -58,14 +68,14 @@ const (
 
 var (
 	connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=true", user1, password, host, database)
-	login_id         string
-	profile_img      string
-	rId string
-	rPassword string
-	rNickname string
-	rFileCount string
-	rImage string
-	rPhone string
+	login_id          string
+	profile_img       string
+	rId 			  string
+	rPassword 		  string
+	rNickname 		  string
+	rFileCount 		  string
+	rImage 			  string
+	rPhone 			  string
 	rVerificationCode string
 )
 
@@ -91,8 +101,6 @@ func getIdCheck(c echo.Context) error {
 	}
 
 	response := user{LoginId: login_id}
-	fmt.Println(response)
-	fmt.Println(response.LoginId)
 
 	if len(response.LoginId) != 0 {
 		return errors.New("이미 존재하는 이메일 입니다")
@@ -157,15 +165,12 @@ func createIdPw(c echo.Context) error {
 	params := make(map[string]string)
     c.Bind(&params)
 
-	loginId := params["loginId"]
-	password := params["password"]
+	rId = params["loginId"]
+	rPassword = params["password"]
 
-	if len(params["password"]) < 10 || len(params["password"]) > 16{
+	if len(rPassword) < 10 || len(rPassword) > 16{
 			return errors.New("비밀번호는 10~16자리 입니다")
 	}
-	
-	rId = loginId
-	rPassword = password
 
 	registerToken, _ := generateToken(0)
 
@@ -219,7 +224,14 @@ func verifyToken(r *http.Request) bool{
 	return true
 }
 
+// USER-3
+func registerTermsAcception(c echo.Context) error {
+
+	return nil
+}
+
 // USER-4
+
 func createUserInfo(c echo.Context) error {
 	if verifyToken(c.Request()) {
 		return errors.New("접근 불가능!!!!!!!!!!!!!")
@@ -327,6 +339,7 @@ func getUser(c echo.Context) error{
 		response := user{LoginId: "", Password: "", LoginAttempt: 0}
 			return c.JSON(http.StatusInternalServerError, response)
 	}
+	
 	defer db.Close()
 	
 	var login_id string;
@@ -459,13 +472,95 @@ func findPassword(c echo.Context) error{
 	return c.JSON(http.StatusOK, "update Password")
 }
 
+
+// User-9
+func decodeToken(r *http.Request) string{
+	header := r.Header.Get("Authorization")
+	tokenString := strings.Split(header, " ")[1]
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return []byte("secret"), nil
+	})
+
+	log.Println(token.Claims, err)
+
+	user := jwtAccessClaims{}
+	token, err = jwt.ParseWithClaims(tokenString, &user, func(token *jwt.Token) (interface{}, error) {
+		return []byte("secret"), nil
+	})
+
+	log.Println(token.Valid, user.UserId, err)
+
+	return user.UserId
+}
+
+func getUserInfo(c echo.Context) error{ 
+	userId := decodeToken(c.Request())
+	db, err := sql.Open("mysql", connectionString)
+
+	if err != nil {
+		fmt.Println(err.Error())
+		response := user{Nickname: "", ProfileImg: ""}
+			return c.JSON(http.StatusInternalServerError, response)
+	}
+
+	defer db.Close()
+	
+	var nickname string;
+	var profile_img string;
+
+	err = db.QueryRow("SELECT nickname, profile_img FROM user WHERE login_id = ?", userId).Scan(&nickname, &profile_img)
+	
+	if err != nil {
+		fmt.Println(err)
+	}
+	
+	response := user{Nickname: nickname, ProfileImg: profile_img}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+func updateUser(c echo.Context) error{
+	userId := c.Param("userId")
+	profileImg := c.FormValue("profileImg")
+	nickname := c.FormValue("nickname")
+	// profileImage := c.FormValue("profileImage")
+	fileCount := c.FormValue("fileCount")
+
+	params := make(map[string]string)
+    c.Bind(&params)
+
+	db, err := sql.Open("mysql", connectionString)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	defer db.Close()
+
+
+	result, err := db.Exec("UPDATE FAQ set nickname = ?, profile_img = ?, fileCount =?, WHERE id = ?", nickname, profileImg, fileCount, userId)
+
+	if err != nil {
+        fmt.Println(err.Error())
+    }
+
+    n, _ := result.RowsAffected()
+
+    if n == 1 {
+        fmt.Println("1 row content updated.")
+    }
+
+    return c.JSON(http.StatusOK, result)
+}
+
 func main() {
 
 	e := echo.New()
 
 	e.GET("/api/v1/user/register/login-id", getIdCheck) // USER-1
 	e.POST("/api/v1/user/register/login-id", createIdPw) // USER-2
-
+	e.POST("/api/v1/user/register/terms", registerTermsAcception) // USER-3
 	e.POST("/api/v1/user/register/info", createUserInfo) // USER-4
 	e.POST("/api/v1/user/register/phone", createUserPhone) // USER-5
 	e.POST("/api/v1/user/login", getUser) // USER-6
@@ -473,8 +568,9 @@ func main() {
 	e.POST("api/v1/user/login-id/find", findId) // USER-7
 	e.POST("api/v1/user/password", findPassword) // USER-8
 
-
-	e.DELETE("/api/v1/user/:userId", deleteUser)
+	e.GET("/api/v1/user/:userId", getUserInfo) // USER-9
+	e.PUT("api/v1/user/:userId", updateUser)
+	e.DELETE("/api/v1/user/:userId", deleteUser) 
 
 	e.Start(":3000")
 }
