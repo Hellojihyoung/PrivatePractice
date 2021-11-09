@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+
 	"sort"
 	"strings"
 	"sync"
@@ -198,11 +200,12 @@ func uploadImage(c echo.Context) error{
 	if err != nil {
 		fmt.Print(err)
 		return err
-	} else {
-		fmt.Println(resp.String())
-	}
-	
-	return c.String(http.StatusOK, resp.String()) 
+	} 
+	location, _ := json.Marshal(resp.Location)
+	fmt.Println(string(location))
+		
+	// return c.String(http.StatusOK, resp.String()) 
+	return c.String(http.StatusOK, string(location)) 
 }
 
 // Pipe 써서 한것,,
