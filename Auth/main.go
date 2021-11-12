@@ -469,7 +469,7 @@ func createState(c echo.Context) error{
     return c.String(http.StatusOK, state)
 }
 
-func renewalToken(c echo.Context) ( error) {
+func renewalToken(c echo.Context) error {
 	
 	accessClaims := &CJwtClaim{
 		codeForm,
