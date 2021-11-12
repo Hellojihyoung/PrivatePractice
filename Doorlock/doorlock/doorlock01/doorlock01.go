@@ -91,21 +91,6 @@ func CheckSerialNumber(c echo.Context) error{
 	if len(certCode) == 0 {
 		return errors.New("인증 실패")
 	}
-
-	// if status == 0 {
-	// 	result, err := db.Exec("UPDATE door_lock set door_lock_status = ? WHERE serial_number = ? AND auth_code = ?", 5,  serialNumber, authCode)
-
-	// 	if err != nil {
-    //     	fmt.Println(err.Error())
-    // 	}
-
-    // 	n, _ := result.RowsAffected()
-
-    // 	if n == 1 {
-    //     	fmt.Println("update status")
-    // 	}
-	// 	return c.String(http.StatusOK, string(id))
-	// }
 	
 	return c.String(http.StatusOK, certCode)
 }
