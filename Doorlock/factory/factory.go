@@ -10,7 +10,9 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	// "sort"
 	"strconv"
+	// "sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -110,33 +112,32 @@ func CreateCSV(data [][]string) string{
 }
 
 
+func UploadCSV(fileName string) string{
 
-// func UploadCSV(fileName string) string{
+	_, writer := io.Pipe()
+	file, _ := os.Open(fileName)
 
-// 	_, writer := io.Pipe()
-// 	file, _ := os.Open(fileName)
-
-// 	go func()  {
-// 		gw := writer
-// 		io.Copy(gw, file)
-// 		file.Close()
-// 		gw.Close()
-// 		writer.Close()
-// 	}()
+	go func()  {
+		gw := writer
+		io.Copy(gw, file)
+		file.Close()
+		gw.Close()
+		writer.Close()
+	}()
 	
-// 	params := &s3.PutObjectInput{
-// 		Bucket: aws.String(bucket),
-// 		Key: aws.String("siggu.jpg"),
-// 	}
+	params := &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key: aws.String(fileName),
+	}
 
-// 	resp, err := svc.PutObject(params)
-// 	if err != nil {
-// 		fmt.Print("bad response: %s", err)
-// 	}
-// 	fmt.Printf("response %s", resp)
+	resp, err := svc.PutObject(params)
+	if err != nil {
+		fmt.Print("bad response: %s", err)
+	}
+	fmt.Printf("response %s", resp)
 	
-// 	return fileName
-// }
+	return fileName
+}
 
 func CreateSerialNumber(c echo.Context) error{
 
