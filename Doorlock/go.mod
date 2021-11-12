@@ -3,7 +3,7 @@ module doorlock
 go 1.17
 
 require (
-	github.com/aws/aws-sdk-go v1.42.2
+	github.com/aws/aws-sdk-go v1.42.3
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/joho/godotenv v1.4.0
