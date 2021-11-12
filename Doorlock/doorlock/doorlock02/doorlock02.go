@@ -20,7 +20,6 @@ var (
 	connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=true", user1, password, host, database)
 )
 
-
 func AuthentificateDoolock(c echo.Context) error{
 	params := make(map[string]string)
 	c.Bind(&params)
@@ -31,20 +30,28 @@ func AuthentificateDoolock(c echo.Context) error{
 	town := params["town"]
 
 	db, err := sql.Open("mysql", connectionString)
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-
+    
 	defer db.Close()
-
-	var id int;
-
-	err = db.QueryRow("SELECT id FROM door_lock WHERE serial_number = ? AND city = ? AND dirstrict = ? AND town = ?", serialNumber, city, district, town).Scan(&id)
 
 	if err != nil {
 		fmt.Println(err)
 	}
-	
-	return c.String(http.StatusOK, string(id))
+
+	result, err := db.Exec("UPDATE door_lock set city = ?, district = ?, town = ? WHERE serial_number = ?", city, district, town, serialNumber)
+
+	if err != nil {
+    	fmt.Println(err.Error())
+	}
+
+	n, _ := result.RowsAffected()
+
+    if n == 1 {
+    	fmt.Println("update location")
+   	}
+ 
+	var id string;
+
+	_ = db.QueryRow("SELECT id FROM door_lock WHERE serial_number = ?", serialNumber).Scan(&id)
+
+	return c.String(http.StatusOK, id)
 }
