@@ -1,4 +1,4 @@
-package doorlock
+package doorlock01
 
 import (
 	"database/sql"
@@ -46,37 +46,6 @@ type (
 var (	
 	connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=true", user1, password, host, database)
 )
-
-//Doorlock-1
-func CreateDoorlockId(c echo.Context) error{
-	params := make(map[string]string)
-    c.Bind(&params)
-
-	serialNumber := c.QueryParam("serialNumber")
-	city := params["city"]
-	district := params["district"]
-	town := params["town"]
-	doorlockId := c.Param("doorlockId")
-
-
-	db, err := sql.Open("mysql", connectionString)
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-
-	defer db.Close()
-
-	var id int; // 발급해준 값
-
-	err = db.QueryRow("SELECT id FROM door_lock WHERE serial_number = ? AND city = ? AND dirstrict = ? AND town = ? AND id = ?", serialNumber, city, district, town, doorlockId).Scan(&id)
-
-	if err != nil {
-		fmt.Println(err)
-	}
-	
-	return c.String(http.StatusOK, string(id))
-}
 
 //Doorlock-2
 func DoorlockAuthenticate(c echo.Context) error{
