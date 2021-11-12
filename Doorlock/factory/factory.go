@@ -1,7 +1,11 @@
 package factory
 
 import (
+	"bytes"
 	"crypto/aes"
+	"crypto/cipher"
+	crand "crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/csv"
 	"fmt"
@@ -10,13 +14,14 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+
 	// "sort"
 	"strconv"
 	// "sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	// "github.com/aws/aws-sdk-go/aws/awsutil"
+	"github.com/aws/aws-sdk-go/aws/awsutil"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -34,6 +39,17 @@ var (
 	token = ""
 )
 
+const (
+	host     = "localhost"
+	database = "HDC"
+	user1    = "root"
+	password = "Ant123!!!"
+)
+
+var (	
+	connectionString = fmt.Sprintf("%s:%s@tcp(%s:3306)/%s?allowNativePasswords=true", user1, password, host, database)
+)
+
 func init() {
 	creds := credentials.NewStaticCredentials(id, key, token)
 	_, err = creds.Get()
@@ -44,10 +60,7 @@ func init() {
 	svc = s3.New(session.New(), cfg)
 }
 
-// [Factory-1]
 func CreateSN(modelNumber string, year string, month string, lot string) string{
-
-	// fmt.Println(modelNumber, year, month, lot)
 	num, _ := strconv.Atoi(year)
 	code := string(num - 1956)
 	serialNumber := modelNumber + code + month + lot
@@ -60,6 +73,7 @@ func CreateSerialKey() string { // 시리얼키 생성
 
 	s := make([]rune, 5)
 	rand.Seed(time.Now().UnixNano())
+	time.Sleep(10)
 	for i := range s {
 		s[i] = randNum[rand.Intn(len(randNum))]
 	}
@@ -78,15 +92,25 @@ func GetUniqueKey() string { // 고유 인증키
 }
 
 func AES128(QRcode string) string{
-	plaintext := []byte(QRcode)
-	key := make([]byte, 32)
-	rand.Read(key) // 랜덤값 키 생성
-	ciphertext := make([]byte, len(plaintext))
+	byteMsg := []byte(QRcode)
+	key := []byte("0123456789abcdef")
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		fmt.Errorf("could not create new cipher: %v", err)
+		return ""
+	}
 
-	cip, _ := aes.NewCipher(key)
-	cip.Encrypt(ciphertext, plaintext)
+	cipherText := make([]byte, aes.BlockSize+len(byteMsg))
+	iv := cipherText[:aes.BlockSize]
+	if _, err = io.ReadFull(crand.Reader, iv); err != nil {
+		fmt.Errorf("could not encrypt: %v", err)
+		return ""
+	}
 
-	return base64.StdEncoding.EncodeToString(ciphertext)
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(cipherText[aes.BlockSize:], byteMsg)
+	
+	return base64.StdEncoding.EncodeToString(cipherText)
 }
 
 func checkError(message string, err error) {
@@ -96,7 +120,7 @@ func checkError(message string, err error) {
 }
 
 func CreateCSV(data [][]string) string{
-	fileName := "result.csv"
+	fileName := "output.csv"
 	file, err := os.Create(fileName)
     checkError("Cannot create file", err)
     defer file.Close()
@@ -111,32 +135,73 @@ func CreateCSV(data [][]string) string{
 	return fileName
 }
 
-
 func UploadCSV(fileName string) string{
 
-	_, writer := io.Pipe()
-	file, _ := os.Open(fileName)
-
-	go func()  {
-		gw := writer
-		io.Copy(gw, file)
-		file.Close()
-		gw.Close()
-		writer.Close()
-	}()
-	
-	params := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key: aws.String(fileName),
-	}
-
-	resp, err := svc.PutObject(params)
+	file, err := os.Open(fileName)
 	if err != nil {
-		fmt.Print("bad response: %s", err)
+		fmt.Print(err)
 	}
-	fmt.Printf("response %s", resp)
-	
+	defer file.Close()
+
+	// fileInfo, _ := file.Stat()
+	// size := fileInfo.Size()
+	// buffer := make([]byte, size)
+
+	// _, s3err := svc.PutObject(&s3.PutObjectInput{
+	// 	Bucket:               aws.String(bucket),
+	// 	Key:                  aws.String(fileName),
+	// 	ACL:                  aws.String("private"),
+	// 	Body:                 bytes.NewReader(buffer),
+	// 	ContentLength:        aws.Int64(size),
+	// 	// ContentType:          aws.String(http.DetectContentType(buffer)),
+	// 	ContentDisposition:   aws.String("attachment"),
+	// 	ServerSideEncryption: aws.String("AES256"),
+	// 	StorageClass:         aws.String("INTELLIGENT_TIERING"),
+	// })
+	// fmt.Println(s3err)
+
+	fileInfo, _ := file.Stat()
+	size := fileInfo.Size()
+	buffer := make([]byte, size) // read file content to buffer
+
+	file.Read(buffer)
+	fileBytes := bytes.NewReader(buffer)
+	fileType := http.DetectContentType(buffer)
+	// path := file.Name()
+	params := &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(file.Name()),
+		Body:          fileBytes,
+		ContentLength: aws.Int64(size),
+		ContentType:   aws.String(fileType),
+	}
+	resp, err := svc.PutObject(params)
+
+	fmt.Printf("response %s", awsutil.StringValue(resp))
+
 	return fileName
+}
+
+func InsertDB(modelNumber string, serialNumber string, authCode string){
+	db, err := sql.Open("mysql", connectionString)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	defer db.Close()
+
+	result, err := db.Exec("INSERT INTO door_lock VALUES(?, NULL, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NOW(), NULL)", 0, modelNumber, serialNumber, authCode)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	n, _ := result.RowsAffected()
+
+	if n == 1 {
+		fmt.Println("1 row inserted.")
+	}
 }
 
 func CreateSerialNumber(c echo.Context) error{
@@ -154,11 +219,12 @@ func CreateSerialNumber(c echo.Context) error{
 
 	for no := 1; no <= count; no++ {
 		SerialNumber := CreateSN(modelNumber, year, month, "01" + CreateSerialKey())
-		QRcode := SerialNumber + "_" + GetUniqueKey()
+		AuthCode := GetUniqueKey()
+		QRcode := SerialNumber + "_" + AuthCode
 		EncryptionQR := AES128(QRcode)
 		row := []string{strconv.Itoa(no), SerialNumber, EncryptionQR}
 		data = append(data, row)
-		// (5) 디비 저장
+		InsertDB(modelNumber, SerialNumber, AuthCode)
     }
 	// fmt.Println(data)
 	URL := UploadCSV(CreateCSV(data))
