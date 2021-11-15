@@ -83,8 +83,9 @@ func CreateSerialKey() string { // 시리얼키 생성
 func GetUniqueKey() string { // 고유 인증키
 	var randNum = []rune("0123456789")
 
-	s := make([]rune, 5)
+	s := make([]rune, 10)
 	rand.Seed(time.Now().UnixNano())
+	time.Sleep(10)
 	for i := range s {
 		s[i] = randNum[rand.Intn(len(randNum))]
 	}
