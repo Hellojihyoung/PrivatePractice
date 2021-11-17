@@ -73,7 +73,7 @@ func verifyToken(r *http.Request) bool{
 	return false
 }
 
-func GetDoorlockInfo(c echo.Context) error{
+func GetDoorlockConnection(c echo.Context) error{
 	// if verifyToken(c.Request()) {
 	// 	return errors.New("Authorization failed")
 	// }
@@ -97,41 +97,4 @@ func GetDoorlockInfo(c echo.Context) error{
 	}
 
 	return c.JSON(http.StatusOK, status)
-}
-
-
-func UpdateDoorlockSetting(c echo.Context) error{
-
-	// if verifyToken(c.Request()) {
-	// 	return errors.New("Authorization failed")
-	// }
-	
-	params := make(map[string]string)
-	c.Bind(&params)
-
-	doorlockId := c.Param("doorlockId")
-	name := params["name"]
-
-	db, err := sql.Open("mysql", connectionString)
-    
-	defer db.Close()
-
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	result, err := db.Exec("UPDATE door_lock set name = ? WHERE id = ?", name, doorlockId)
-
-	if err != nil {
-    	fmt.Println(err.Error())
-	}
-
-	n, _ := result.RowsAffected()
-
-    if n == 1 {
-    	fmt.Println("update")
-   	}
-
-   return c.NoContent(http.StatusOK)
-
 }
