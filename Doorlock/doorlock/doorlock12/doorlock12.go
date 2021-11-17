@@ -24,23 +24,6 @@ type jwtAccessClaims struct {
 	jwt.StandardClaims
 }
 
-type (
-	doorlock struct {
-		ModelNumber     string  `json:"modelNumber"`
-		// Nickname        string  `json:"nickname"`
-		Battery         int     `json:"battery"`
-		Cell            int     `json:"cell"`
-		HomeSafe        bool    `json:"homeSafe"`
-		Firmware        string  `json:"firmware"`
-		SerialNumber    string  `json:"serialNumber"`
-		City            string  `json:"city"`
-		District        string  `json:"district"`
-		Town            string  `json:"town"`
-		CertCode        string  `json:"certCode"`
-
-	}
-)
-
 const (
 	host     = "localhost"
 	database = "HDC"
