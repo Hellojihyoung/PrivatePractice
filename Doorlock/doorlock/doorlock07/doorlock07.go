@@ -135,7 +135,7 @@ func UpdateDoorlockSetting(c echo.Context) error{
 		fmt.Println(err)
 	}
 
-	result, err := db.Exec("UPDATE door_lock set city = ?, district = ?, town = ? WHERE serial_number = ?", doorlockId, name)
+	result, err := db.Exec("UPDATE door_lock set name = ? WHERE id = ?", name, doorlockId)
 
 	if err != nil {
     	fmt.Println(err.Error())
