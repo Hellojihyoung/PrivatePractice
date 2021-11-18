@@ -131,9 +131,6 @@ func HandleMessage(phone_number string) string {
 	json_data, _ := json.Marshal(request)
 	reqBody := bytes.NewBuffer(json_data)
 
-	fmt.Println("reqBody")
-	fmt.Println(reqBody)
-
 	client := &http.Client{}
 
 	req, _ := http.NewRequest("POST", "https://sens.apigw.ntruss.com/sms/v2/services/ncp:sms:kr:273928692857:go_sns/messages", reqBody)
@@ -225,7 +222,6 @@ func createNum(c echo.Context) error {
 		fmt.Println("1 row inserted.")
 	}
 
-	// expirationTime := time.Now().Add(time.Second * 180)
 	expirationTime := 180
 
 	return c.JSON(http.StatusOK, expirationTime)
@@ -347,10 +343,9 @@ func googleAuthCallback(c echo.Context) error{
    	if err := json.Unmarshal(data, &gUser); err != nil {
       fmt.Println(err.Error())
    }
-   	fmt.Println("code")
-   	fmt.Println(r.FormValue("code"))
+
    	customToken, _ := generateToken(r.FormValue("code"))
-	fmt.Println(customToken["access_token"])
+	// fmt.Println(customToken["access_token"])
 
 	return c.String(http.StatusOK, string(data))
 }
