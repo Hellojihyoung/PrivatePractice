@@ -73,11 +73,11 @@ func verifyToken(r *http.Request) bool{
 	return false
 }
 
-func UpdateDoorlockSetting(c echo.Context) error{
+func UpdateSafeHome(c echo.Context) error{
 
-	// if verifyToken(c.Request()) {
-	// 	return errors.New("Authorization failed")
-	// }
+	if verifyToken(c.Request()) {
+		return errors.New("Authorization failed")
+	}
 	
 	params := make(map[string]string)
 	c.Bind(&params)
